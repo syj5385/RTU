@@ -12,31 +12,10 @@
 
 #include "rtu_serial.h"
 #include "../etc/ipc.h"
-#include "../etc/log.h"
+#include "../etc/config.h"
+#include "../etc/log_util.h"
 #include "../network/netinfo.h"
-
-const char* rtu_TAG = "PROTOCOL";
-
-static uint16_t calculateCRC16(uint8_t* buf, const int length){
-	uint16_t initCRC = 0xffff;
-	uint16_t crc = 0;
-	int i,j;
-
-	if((buf == 0) || (length == 0))
-		return 0;
-
-	for(i=0; i<length; i++){
-		initCRC ^= buf[i];
-		for(j=0; j<8; j++){
-			crc = initCRC;
-			initCRC >>= 1;
-			if((crc & 0x0001) > 0){
-				initCRC ^= 0xa001;
-			}
-		}
-	}
-	return initCRC;
-}
+#include "../define.h"
 
 uint16_t read16(uint8_t high, uint8_t low){
 	return (high<<8) + low;
@@ -52,17 +31,7 @@ int analyzeReceivedMsg(Frame* frame, uint8_t* rcv_buf, size_t size){
 	etx = rcv_buf[size-1];
 	if(stx != STX || etx != ETX)
 		return RESULT_INVALID;
-
-	/* 2. calculate checksum */
-	crcInMsg = read16(rcv_buf[size-3], rcv_buf[size-2]);
-	rcv_buf[size-3] = 0;
-	rcv_buf[size-2] = 0;
-	calculated_crc = calculateCRC16(rcv_buf+1, size-4);
-
-#ifdef	ENABLE_CHECKSUM
-	if(crcInMsg != calculated_crc)
-		return RESULT_INVALID_CHECKSUM;
-#endif
+	
 
 	/* 3. make frame box */
 	index = 1;
@@ -73,19 +42,31 @@ int analyzeReceivedMsg(Frame* frame, uint8_t* rcv_buf, size_t size){
 	index+=2;
 	for(i=0; i<frame->size; i++)
 		*(frame -> data + i) = rcv_buf[index++];
-
+	
+	if(frame->device_id != RTU_ID){
+		LOG_WARNING("Device id is not matched");
+		return RESULT_INVALID;
+	}
 	return RESULT_OK;
 }
 
 
-int request_current_status(Frame* frame, int* ipc_sockfd){
+int request_current_status(Frame* frame, int* ipc_sockfd){ 
 	/* implementation for request current relay and sensor status */
+	/* OPCODE = 0x60 */
 	uint8_t ipc_tmp[frame->size + 5];
 	uint8_t ipc_read_buf[1024];
 	int i, n;
 	int index = 0;
-	bzero(ipc_read_buf,sizeof(ipc_read_buf));
+#ifdef DEMO
+	frame -> size = 6; 
+	for(i=0; i<frame->size; i++)
+		*(frame -> data+i) = (uint8_t)(rand()*255+1)%0xff; 
+	return 0;
 
+#endif
+
+	bzero(ipc_read_buf,sizeof(ipc_read_buf));
 	ipc_tmp[index++] = (uint8_t)((frame -> device_id) & 0xff);
 	ipc_tmp[index++] = (uint8_t)(((frame -> device_id) >> 8) & 0xff);
 	ipc_tmp[index++] = frame -> opcode;
@@ -94,26 +75,25 @@ int request_current_status(Frame* frame, int* ipc_sockfd){
 	for(i=0; i<frame->size; i++)
 		ipc_tmp[index++] = *(frame -> data + i);
 
+
 	/* send <opcode> <data_size_high> <data_size_low> <data> - - - <data> */
 	n = write(*ipc_sockfd, ipc_tmp, frame->size+5);
 	if(n<0)
 		return -1;
-
-	/* result : <data size> <data> ... <data>
+	/* result : <data size> <data> ... <data> */ 
 	/* Receive result from sersor */
-	while((n = readIPC_Data(*ipc_sockfd, ipc_read_buf, 1024)) <= 0){
-		if(n==-1)
-			return n;
-	}
-
+	n = readIPC_Data(*ipc_sockfd, ipc_read_buf, 1024);
+	printf("Read : %d\n",n);
 	if(n<0){
-		writeLog(ERROR,rtu_TAG,"Failed to read IPC data from sensor process");
-		return -1;
+		LOG_ERROR("ERROR : Failed to get current status : Read IPC Data Failed");
+		return -1; 
 	}
-
+	LOG_TRACE("Let's write Data to PC client");
 	bzero(frame -> data, sizeof(frame->data));
 
-	index = 3 ;
+	index = 3;
+	if(ipc_read_buf[2] == 0xff)
+		return -1;
 	frame -> size = read16(ipc_read_buf[index+1], ipc_read_buf[index]);
 	index+=2;
 	for(i=0; i<frame->size; i++)
@@ -123,12 +103,21 @@ int request_current_status(Frame* frame, int* ipc_sockfd){
 }
 
 int request_sensor_data(Frame* frame, int* ipc_sockfd){
+	/* OPcode : 0x61 */ 
 	uint8_t ipc_tmp[frame->size + 5];
 	uint8_t ipc_read_buf[1024];
 	int i, n;
 	int index = 0;
-	bzero(ipc_read_buf,sizeof(ipc_read_buf));
 
+#ifdef DEMO
+	frame -> size = 24; 
+	for(i=0; i<frame->size; i++)
+		*(frame -> data+i) = (uint8_t)(rand()*255+1)%0xff; 
+	return 0;
+
+#endif
+	bzero(ipc_read_buf,sizeof(ipc_read_buf));
+	//ipc_tmp[index++] = 0x02;
 	ipc_tmp[index++] = (uint8_t)((frame -> device_id) & 0xff);
 	ipc_tmp[index++] = (uint8_t)(((frame -> device_id) >> 8) & 0xff);
 	ipc_tmp[index++] = frame -> opcode;
@@ -137,23 +126,14 @@ int request_sensor_data(Frame* frame, int* ipc_sockfd){
 	for(i=0; i<frame->size; i++)
 		ipc_tmp[index++] = *(frame -> data + i);
 
+
 	/* send <opcode> <data_size_high> <data_size_low> <data> - - - <data> */
 	n = write(*ipc_sockfd, ipc_tmp, frame->size+5);
-	if(n<0)
-		return -1;
-
-	/* result : <data size> <data> ... <data>
-	/* Receive result from sersor */
-	while((n = readIPC_Data(*ipc_sockfd, ipc_read_buf, 1024)) <= 0){
-		if(n==-1)
-			return n;
-	}
-
+	n = readIPC_Data(*ipc_sockfd, ipc_read_buf, 1024);
 	if(n<0){
-		writeLog(ERROR,rtu_TAG,"Failed to read IPC data from sensor process");
-		return -1;
+		LOG_ERROR("ERROR : Failed to get sensor data : Read IPC Data Failed");
+		return -1; 
 	}
-
 	bzero(frame -> data, sizeof(frame->data));
 
 	/* Ignore rtu_id */
@@ -168,6 +148,7 @@ int request_sensor_data(Frame* frame, int* ipc_sockfd){
 
 int request_rtu_info(Frame* frame){
 	/* implementation for get Current RTU network information */
+	/* OPCODE : 0x62 */ 
 	u_long ip_addr; // unsigned long Big_Endian
 	u_long netmask; // unsigned long Big_Endian
 	u_long gateway; // unsigned long Big_Endian
@@ -178,24 +159,25 @@ int request_rtu_info(Frame* frame){
 	int i=0;
 	bzero(interface_name, sizeof(interface_name));
 
-	
-
-	if((gateway = get_gatewayip(interface_name)) == -1){
-		writeLog(ERROR,rtu_TAG,"Error : Failed to get default gateway");
-
-		return -1;
+	LOG_CALL(gateway = get_gatewayip(interface_name));
+	if(gateway == -1){
+		LOG_ERROR("Error : Failed to get default gateway");
+		goto failed; 
 	}
 
-	if((ip_addr = get_IPAddress(interface_name)) == -1){
-		writeLog(ERROR,rtu_TAG,"Error : Failed to get IP address");
-		return -1;
-	}
-	if((netmask = get_SubnetMask(interface_name)) == -1){
-		writeLog(ERROR,rtu_TAG,"Error : Failed to get netmask");
-		return -1;
+	LOG_CALL(ip_addr = get_IPAddress(interface_name));
+	if(ip_addr == -1){
+		LOG_ERROR("Error : Failed to get IP address");
+		goto failed ;
 	}
 
-	server_port = TCP_PORT;
+	LOG_CALL(netmask = get_SubnetMask(interface_name));
+	if(netmask == -1){
+		LOG_ERROR("Error : Failed to get netmask");
+		goto failed;
+	}
+
+	server_port = TCPPORT;
 	rtu_id = RTU_ID;
 
 	/* set frame */
@@ -203,14 +185,12 @@ int request_rtu_info(Frame* frame){
 
 	for(i=0; i<4; i++){	// ip_address
 		*(frame->data + index) = (ip_addr & 0xff);
-//		printf("%d\n", *(frame -> data + index));
 		ip_addr = ip_addr >> 8;
 		index++;
 	}
 
 	for(i=0; i<4; i++){	// subnet mask
 		*(frame->data + index) = (netmask & 0xff);
-//		printf("%d\n", *(frame -> data + index));
 		netmask = netmask >> 8;
 		index++;
 	}
@@ -218,7 +198,6 @@ int request_rtu_info(Frame* frame){
 
 	for(i=0; i<4; i++){	// gateway mask
 		*(frame->data + index) = (gateway & 0xff);
-//		printf("%d\n", *(frame -> data + index));
 		gateway = gateway >> 8;
 		index++;
 	}
@@ -230,15 +209,24 @@ int request_rtu_info(Frame* frame){
 	// server Port number
 	*(frame -> data + index++) = ((rtu_id >> 8) & 0xff);
 	*(frame -> data + index++) = ((rtu_id) & 0xff);
+
+	return 0;
+
+failed : 
+	return -1;
 }
 
 int request_set_rtu(Frame* frame){
+
+	/* OPCODE : 0x63 */ 
 	int index = 0;
 	u_long ip_addr=0, netmask=0, gateway=0;
 	uint16_t server_port=0, rtu_id=0;
-	char *ip_addr_string, *netmask_string, *gateway_string;
+	char ip_addr_string[100];
+	char netmask_string[100];
+	char gateway_string[100];
 	int result;
-
+	char buf[1000]; 
 	/* get ip_address */
 	ip_addr = frame->data[index] + ((frame->data[index+1] << 8) & 0xff00) + ((frame->data[index+2]<<16) & 0xff0000)
 			+ ((frame->data[index+3]<<24) & 0xff000000);
@@ -261,20 +249,39 @@ int request_set_rtu(Frame* frame){
 	/* get RTU number */
 	rtu_id = ((frame->data[index]<<8)&0xff00) | (frame->data[index+1] & 0xff);
 
-	ip_addr_string = getAddressFromIntegerArray(ip_addr);
-	netmask_string = getAddressFromIntegerArray(netmask);
-	gateway_string = getAddressFromIntegerArray(gateway);
+	//ip_addr_string=getAddressFromIntegerArray(ip_addr);
+	strcpy(ip_addr_string, getAddressFromIntegerArray(ip_addr));
+	//netmask_string=getAddressFromIntegerArray(netmask);
+	strcpy(netmask_string,getAddressFromIntegerArray(netmask));
+	//gateway_string=getAddressFromIntegerArray(gateway,gateway_string);
+	strcpy(gateway_string, getAddressFromIntegerArray(gateway));
+	sprintf(buf, "ip : %s\t,netmask : %s\tgatesay : %s\tport : %d\trtu_id : %d", ip_addr_string, netmask_string, gateway_string,server_port, rtu_id);
+	LOG_TRACE(buf);
+	setConfigPort(server_port);
+	setRTUid(rtu_id);
+	result = setNetworkInformation(ip_addr_string, netmask, gateway_string);
+	if(result == -1)
+		return -1;
 
-	result = setNetworkInformation(ip_addr_string, netmask_string, gateway_string);
+	else return 0; 
 }
 
 int request_set_relay(Frame* frame, int* ipc_sockfd){
+	/* OPcode : 0x64 */ 
 	uint8_t ipc_tmp[frame->size + 5];
 	uint8_t ipc_read_buf[1024];
 	int i, n;
 	int index = 0;
 	bzero(ipc_read_buf,sizeof(ipc_read_buf));
+	
+#ifdef DEMO
+	frame -> size = 1;
+	*(frame->data) = 0x00;
+	return 0;
 
+#endif
+
+	//ipc_tmp[index++] = 0x02; 
 	ipc_tmp[index++] = (uint8_t)((frame -> device_id) & 0xff);
 	ipc_tmp[index++] = (uint8_t)(((frame -> device_id) >> 8) & 0xff);
 	ipc_tmp[index++] = frame -> opcode;
@@ -282,28 +289,26 @@ int request_set_relay(Frame* frame, int* ipc_sockfd){
 	ipc_tmp[index++] = (uint8_t)(((frame -> size)>>8)&0xff);
 	for(i=0; i<frame->size; i++)
 		ipc_tmp[index++] = *(frame -> data + i);
+	//ipc_tmp[index++] = 0x03; 
 
 
 	char buf[100];
-	sprintf(buf, "size : %02x, %02x",ipc_tmp[3], ipc_tmp[4]);
-	writeLog(NORMAL, rtu_TAG, buf);
 	/* send <opcode> <data_size_high> <data_size_low> <data> - - - <data> */
 	n = write(*ipc_sockfd, ipc_tmp, frame->size+5);
 	if(n<0)
 		return -1;
 
-	/* result : <data size> <data> ... <data>
+	n = readIPC_Data(*ipc_sockfd, ipc_read_buf, 1024);
+	/* result : <data size> <data> ... <data> */ 
 	/* Receive result from sersor */
-	while((n = readIPC_Data(*ipc_sockfd, ipc_read_buf, 1024)) <= 0){
-		if(n==-1)
-			return n;
-	}
-
-	if(n<0){
-		writeLog(ERROR,rtu_TAG,"Failed to read IPC data from sensor process");
+	if(n < 0){
+		LOG_ERROR("Failed to set Relay : Failed to read IPC");
 		return -1;
 	}
-
+	printf("Network received : ");
+	for(i=0; i<n; i++)
+		printf("%02x ", ipc_read_buf[i]);
+	printf("\n");
 	bzero(frame -> data, sizeof(frame->data));
 
 	index = 3 ;
@@ -316,6 +321,8 @@ int request_set_relay(Frame* frame, int* ipc_sockfd){
 }
 
 int request_soft_reset(Frame* frame){	
+
+	/* OPcode : 0x65 */ 
 	pid_t reboot_pid; 
 
 	if((reboot_pid = fork()) == -1){
@@ -325,7 +332,7 @@ int request_soft_reset(Frame* frame){
 		return -1;
 	}
 	else if(reboot_pid == 0){
-		writeLog(NORMAL, rtu_TAG, "Reboot will be started in 2 sec");
+		LOG_INFO("Reboot is request from client");
 		sleep(2);
 		execl("/sbin/reboot", "/sbin/reboot", NULL);
 		
@@ -338,40 +345,101 @@ int request_soft_reset(Frame* frame){
 
 }
 
+
+int request_reset_channel(Frame *frame, int *ipc_sockfd){
+	/* Opcode : 0x66 */
+	uint8_t ipc_read_buf[1024];
+	uint8_t ipc_tmp[frame->size + 5];
+	int i, n;
+	int index = 0;
+	bzero(ipc_read_buf,sizeof(ipc_read_buf));
+
+#ifdef DEMO
+	frame -> size = 1; 
+	*(frame->data) = 0x00;
+	return 0;
+
+#endif
+
+	//ipc_tmp[index++] = 0x02; 
+	ipc_tmp[index++] = (uint8_t)((frame -> device_id) & 0xff);
+	ipc_tmp[index++] = (uint8_t)(((frame -> device_id) >> 8) & 0xff);
+	ipc_tmp[index++] = frame -> opcode;
+	ipc_tmp[index++] = (uint8_t)((frame->size)&0xff);
+	ipc_tmp[index++] = (uint8_t)(((frame -> size)>>8)&0xff);
+	for(i=0; i<frame->size; i++)
+		ipc_tmp[index++] = *(frame -> data + i);
+
+
+	/* send <opcode> <data_size_high> <data_size_low> <data> - - - <data> */
+	n = write(*ipc_sockfd, ipc_tmp, frame->size+5);
+	if(n<0)
+		return -1;
+
+	n = readIPC_Data(*ipc_sockfd, ipc_read_buf, 1024);
+	if(n<0){
+		LOG_ERROR("ERROR : Failed to reset Channel : Failed to read IPC");
+		return -1; 
+	}
+	bzero(frame -> data, sizeof(frame->data));
+
+	index = 3 ;
+	frame -> size = read16(ipc_read_buf[index+1], ipc_read_buf[index]);
+	index+=2;
+	for(i=0; i<frame->size; i++)
+		*(frame -> data + i) = ipc_read_buf[index++];
+
+	return 0; 
+}
+
 int executeProtocol(Frame* frame, int* ipc_sockfd){
 	int opcode = frame -> opcode;
 	int result;
 	switch(opcode){
 		case REQUEST_STATUS :
 			/* request current relay and sensor status info */
-			writeLog(NORMAL,rtu_TAG,"REQUEST : request current relay/sensor status");
-			return (result = request_current_status(frame,ipc_sockfd));
-			
+			LOG_INFO("Request : Request current relay/sensor status");
+			LOG_CALL(result = request_current_status(frame,ipc_sockfd));
+			return result; 
 
 		case REQUEST_DATA :
 			/* request sensor data */
-			writeLog(NORMAL,rtu_TAG,"REQUEST : request current relay/sensor data");
-			return (result = request_sensor_data(frame,ipc_sockfd));
+			LOG_INFO("Request : Request current relay/sensor data");
+			LOG_CALL(result = request_sensor_data(frame, ipc_sockfd));
+			return result;
 
 		case REQUEST_RTU_INFO :
 			/* request current RTU setting information */
-			writeLog(NORMAL,rtu_TAG,"REQUEST : request RTU Information");
-			return (result = request_rtu_info(frame));
+			LOG_INFO("Request : request RTU information");
+			LOG_CALL(result = request_rtu_info(frame));
+			return result; 
 
 		case REQUEST_SET_RTU :
 			/* request to set RTU */
-			writeLog(NORMAL,rtu_TAG,"REQUEST : request RTU setting");
-			return (result = request_set_rtu(frame));
+			LOG_INFO("Request : request to set RTU");
+			LOG_CALL(result = request_set_rtu(frame));
+			return result; 
 
 		case REQUEST_SET_RELAY :
 			/* request to control relay */
-			writeLog(NORMAL,rtu_TAG,"REQUEST : request to set relay");
-			return (result = request_set_relay(frame, ipc_sockfd));
+			LOG_INFO("request : request to set relay");
+			LOG_CALL(result = request_set_relay(frame, ipc_sockfd));
+			return result;
 
 		case REQUEST_SOFT_RST :
 			/* request to reset rtu */
-			writeLog(NORMAL,rtu_TAG,"REQUEST : request to reset RTU");
-			return (result = request_soft_reset(frame));
+			LOG_INFO("Request : request to reset RTU");
+			LOG_CALL(result = request_soft_reset(frame));
+			return result;
+
+		case REQUEST_CHANNEL_RST : 
+			LOG_INFO("Request : request to reset channel data");
+			LOG_CALL(result = request_reset_channel(frame,ipc_sockfd)); 
+			return result; 
+
+		default : 
+
+			return 1; /* Invalid OP code */ 
 	}
 }
 
@@ -390,11 +458,6 @@ void makeMsgUsingframe(Frame* frame, uint8_t* dest){
 	for(i=0; i<frame->size; i++)
 		dest[index++] = *(frame -> data + i);
 
-	crc_check_length = index-1;
-
-	crc = calculateCRC16(dest+1, crc_check_length);
-	dest[index++] = (uint8_t)(crc & 0xff);
-	dest[index++] = (uint8_t)((crc>>8)&0xff);
 	dest[index++] = ETX;
 
 }

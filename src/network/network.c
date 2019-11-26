@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <libgen.h>
 #include <pthread.h>
 #include <string.h>
 #include <signal.h>
@@ -14,11 +15,11 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include "../define.h"
-#include "../etc/log.h"
 #include "../etc/ipc.h"
 #include "../etc/config.h"
 #include "../protocol/rtu_serial.h"
 #include "tcp.h"
+#include "../etc/log_util.h"
 
 #define	PORT	1
 
@@ -52,25 +53,22 @@ static sigset_t pset;
 /* signal Handler */
 static void sigHandler(int signo){
 	if(signo == SIGINT){
-		writeLog(WARNING,TAG,"SIGINT signal Received");
+		LOG_WARNING("SIGINT signal Received");
 		close(server->sockfd);
 		freeServer(server);
-		closeLogFile();
-		exit(0);
+		exit(EXIT_KILL_ALL);
 	}
 	if(signo == SIGTERM){
-		writeLog(WARNING,TAG,"SIGTERM signal Received");
+		LOG_WARNING("SIGTERM signal Received");
 		close(server->sockfd);
 		freeServer(server);
-		closeLogFile();
-		exit(0);
+		exit(EXIT_KILL_ALL);
 	}
 	if(signo == SIGTSTP){
-		writeLog(WARNING,TAG,"SIGTSTP signal Received");
+		LOG_WARNING("SIGTSTP signal Received");
 		close(server->sockfd);
 		freeServer(server);
-		closeLogFile();
-		exit(0);
+		exit(EXIT_KILL_ALL);
 	}
 }
 static void initializeSignalHandler(){
@@ -79,13 +77,13 @@ static void initializeSignalHandler(){
 	sigprocmask(SIG_BLOCK, &pset, NULL);
 
 	if(signal(SIGINT,sigHandler) == SIG_ERR){
-		exit(1);
+		exit(EXIT_KILL_ME);
 	}
 	if(signal(SIGTSTP, sigHandler) == SIG_ERR){
-		exit(1);
+		exit(EXIT_KILL_ME);
 	}
 	if(signal(SIGTERM,sigHandler) == SIG_ERR){
-		exit(1);
+		exit(EXIT_KILL_ME);
 	}
 }
 
@@ -99,9 +97,30 @@ void* newClientThread(void* arg){
 	int tcp_n, ipc_n;
 	Client* client = (Client*)arg;
 	int errorcode = 0;
+	int execute_result; 
+	int connect_result; 
+	int analysis_result; 
+	int i=0; 
+	
+	//connect_result = (int*)malloc(sizeof(int));
+	
+	LOG_CALL(connect_result = initialzieLocalSocket_Client(&client->ipc.ipc_sockfd, &(client->ipc.ipc_addr), &(client->ipc.ipc_addr_len),NH_SOCKET,10000));
 
-	if(!initialzieLocalSocket_Client(&client->ipc.ipc_sockfd, &(client->ipc.ipc_addr), &(client->ipc.ipc_addr_len),NH_SOCKET,10000)){
-		exit(1);
+
+	if(connect_result == -1){
+		/* This code is for situation that local socket is not connected */
+		/* If failed, connectiong with PC client will be disconnected 
+		   after send error message */ 
+		LOG_ERROR("ERROR : Failed to connect Local socket");
+		frame -> opcode = 0xff;
+		frame -> size = 0;
+		memset(frame->data,0, sizeof(frame->data));
+		if((tcp_n = send(client->sockfd, tcp_send_buf, frame->size+7 ,0)) < 0){
+			LOG_ERROR("Error : Failed to send Message");
+			errorcode = 1;
+		}
+		free(frame);
+		goto close; 
 	}
 
 	while(1){
@@ -111,49 +130,52 @@ void* newClientThread(void* arg){
 		tcp_n = recv(client -> sockfd, tcp_read_buf,BUFSIZ,0);
 
 		if(tcp_n <= 0){
-			result = FAILED_NETWORK;
-			errorcode = 1;
+			free(frame);
 			goto close;
 		}
-		int analysis_result = analyzeReceivedMsg(frame, tcp_read_buf,tcp_n);
-/*		int execute_result = executeProtocol(frame,&client->ipc.ipc_sockfd);
+		LOG_CALL(analysis_result = analyzeReceivedMsg(frame, tcp_read_buf,tcp_n));
+		if(analysis_result == RESULT_INVALID){
+			LOG_WARNING("Message from Client is not valid");
+			frame -> opcode = 0xff;
+			frame -> size = 0;
+			memset(frame->data,0, sizeof(frame->data));
+			goto send; 
+		}
+		
+		LOG_CALL(execute_result = executeProtocol(frame,&client->ipc.ipc_sockfd));
+		if(execute_result != 0 || frame -> opcode == 0xff) {
+			/* Failed to execute protocol command */ 
+			printf("Network : Failed to execute protocol\n");
+			frame -> opcode = 0xff;
+			frame -> size = 6;
+			memset(frame->data,0,sizeof(frame->data));
+			for(i=0; i<6; i++)
+				frame->data[i] = 0xff; 
+			goto send; 
+		}
 
+		LOG_TRACE("Success to get result");
+
+send :
 		makeMsgUsingframe(frame, tcp_send_buf);
 
-		if((tcp_n = send(client->sockfd, tcp_send_buf, frame->size+9 ,0)) < 0){
-			writeLog(ERROR,TAG,"Error : Failed to send message\n");
+		if((tcp_n = send(client->sockfd, tcp_send_buf, frame->size+7 ,0)) < 0){
+			LOG_ERROR("Error : Failed to send Message");
 			errorcode = 1;
-			goto close;
-		}*/
-
-
-
-		if((tcp_n = send(client->sockfd, tcp_read_buf, frame->size+9 ,0)) < 0){
-			writeLog(ERROR,TAG,"Error : Failed to send message\n");
-			errorcode = 1;
+			free(frame);
 			goto close;
 		}
-
+		/* Success to process one protocol message */
+		/* After that, Wait for new message */ 
 		free(frame);
 	}
 
-check :
-/* analysis of result code */
-	switch(result){
-	case FAILED_NETWORK :
-		writeLog(ERROR,TAG,"ERROR:Failed to read tcp data");
-		goto close;
-
-	}
 close :
 	pthread_mutex_lock(&socket_mutex);
 	/* close ipc sockfd */
 	close((client -> ipc).ipc_sockfd);
 	freeClient(client);
 	pthread_mutex_unlock(&socket_mutex);
-	goto exit;
-
-exit :
 	decreaseClient();
 
 }
@@ -163,18 +185,22 @@ void* tcpServerThread(void* arg){
 	 * If new Client is accepted, it will be assigned to process thread.
 	 * This Thread is blocked until new client is accepted.
 	 */
+	int listened;
+	int accepted; 
 	while(1){
-		if(listenClient(server) < 0){
-			writeLog(ERROR, TAG, " Error : failed to listen client");
-			exit(1);
+		listened = listenClient(server);
+		if(listened < 0){
+			LOG_ERROR("Error : Failed to listen client");
+			exit(EXIT_KILL_ME);
 		}
 
 		Client *client = (Client*)malloc(sizeof(Client));
-		bzero(client, sizeof(client));
+		bzero(client, sizeof(Client));
 
-		if(acceptClient(server,client) < 0){
-			writeLog(ERROR, TAG, " Error : failed to listen client");
-			exit(1);
+		LOG_CALL(accepted = acceptClient(server,client));
+		if(accepted < 0){
+			LOG_ERROR("Error : Failed to accept client");
+			exit(EXIT_KILL_ME);
 		}
 		addClient();
 		if(client == NULL){
@@ -185,19 +211,17 @@ void* tcpServerThread(void* arg){
 		// if new client is accepted
 		pthread_create(&client->thread, NULL, newClientThread, client);
 		pthread_detach(client->thread);
-		usleep(50000);
 	}
 }
 
 int main(int argc, char** argv){
 	//getConfigContent("SERVERNAME");
 
-	if(openLogFile() == 0)
-		exit(1);
-
-	writeLog(NORMAL,TAG,"Start Network process");
+	LOGsetInfo(LOG_PATH,basename(argv[0]));
+	LOG_TRACE("Start NetworkProcess");
 
 
+	initializeSignalHandler();
 
 	pid_t network_pid = getpid();
 	FILE* pid_file = fopen(network_pid_file,"w+");
@@ -211,24 +235,25 @@ int main(int argc, char** argv){
 	 *  Initialize TCP Server
 	 */
 	char log_buf[1000];
-	int user_port = getConfigPort(); 
-	if(user_port <= 0x00 || user_port >= 0xffff){
-		writeLog(ERROR,TAG,"Error : port number is not valid");
-		perror("Error : Port number is invalid");
-		exit(0);
+	TCPPORT = getConfigPort(); 
+	RTU_ID = getRTUID();
+	if(TCPPORT <= 0x00 || TCPPORT >= 0xffff){
+		LOG_ERROR("Error : Port number is not valied");
+		exit(EXIT_NORMAL);
 	}
-	sprintf(log_buf,"bind port : %d",getConfigPort());
-	writeLog(NORMAL,TAG,log_buf);
-	if((server = initializeTCP_Server(getConfigPort())) == NULL){
+	sprintf(log_buf,"bind port : %d",TCPPORT);
+	LOG_TRACE(log_buf);
+	LOG_TRACE("Binding Port");
+	if((server = initializeTCP_Server(TCPPORT)) == NULL){
 		/* Failed to create TCP Server socket.
 		 * In this case, this process has to send quit command to main and hardware process
 		 */
-		exit(1);
+		exit(EXIT_NORMAL);
 	}
 	pthread_create(&server->thread, NULL,tcpServerThread, NULL);
 
 	/* 3. Read Fifo command from Hardware process */
 	pthread_join(server->thread , NULL);
 
-	return 0;
+	exit(EXIT_NORMAL);
 }

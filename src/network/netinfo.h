@@ -27,7 +27,5 @@ u_long get_IPAddress(char* interface);
 u_long get_SubnetMask(char* interface);
 u_long get_gatewayip(char* ifname);
 
-//u_long get_DefaultGateway(char* interface_name);
-
-int setNetworkInformation(char *ipaddr, char *netmask, char *gateway);
+int setNetworkInformation(char *ipaddr, u_long netmask, char *gateway);
 #endif /* SRC_NETWORK_NETINFO_H_ */

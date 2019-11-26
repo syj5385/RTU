@@ -13,7 +13,7 @@
 
 /* STX & ETX */
 #define		STX			0x02
-#define		ETX 		0x03
+#define		ETX 			0x03
 
 /* Definition for RTU serial frame */
 typedef struct{
@@ -30,12 +30,13 @@ typedef struct{
 #define		REQUEST_SET_RTU		0x63
 #define		REQUEST_SET_RELAY	0x64
 #define		REQUEST_SOFT_RST	0x65
+#define		REQUEST_CHANNEL_RST	0x66
 
 /* Definition for RTU Serial Result code */
-#define 	RESULT_OK					0x01
-#define		RESULT_INVALID				0x02
-#define		RESULT_INVALID_CHECKSUM		0x03
-#define		RESULT_FAILED				0x04
+#define 	RESULT_OK			0x00
+#define		RESULT_INVALID			0x01
+#define		RESULT_INVALID_CHECKSUM		0x02 /* not used */ 
+#define		RESULT_FAILED			0x03
 
 /* proto type of function for RTU serial */
 

@@ -3,7 +3,9 @@
 removeLog(){
 	echo "Remove rtu log file"
 	rm -fr "$LOGFILE"
+	rm -fr "$PREVLOGFILE"
 }
+
 
 removeConf(){
 	echo "Remove Rtu config file"
@@ -13,7 +15,6 @@ removeConf(){
 }
 
 deleteService(){
-
 	rm -fr /usr/sbin/rtu
 	rm -fr /usr/sbin/network_proc
 	rm -fr /usr/sbin/sensor_proc
@@ -24,7 +25,7 @@ deleteService(){
 
 test -f /etc/rtu/rtu.conf && {
 	# RTU Server is installed
-	service rtu stop
+	/etc/init.d/rtu stop
 	echo "Stop rtu execute file"
 	. /etc/rtu/rtu.conf
 	deleteService

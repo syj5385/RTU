@@ -10,13 +10,13 @@ ETC=$(SRC)etc/
 PROTOCOL=$(SRC)protocol/
 
 
-MAIN_OBJ=$(SRC)rtu.o $(ETC)config.o $(ETC)log.o
+MAIN_OBJ=$(SRC)rtu.o $(ETC)config.o $(ETC)log_util.o
 MAIN_TARGET=RTU
 
-NET_OBJ=$(NET)network.o $(NET)tcp.o $(NET)netinfo.o $(PROTOCOL)rtu_serial.o $(ETC)ipc.o $(ETC)config.o $(ETC)log.o $(ETC)linked_list.o
+NET_OBJ=$(NET)network.o $(NET)tcp.o $(NET)netinfo.o $(PROTOCOL)rtu_serial.o $(ETC)ipc.o $(ETC)config.o $(ETC)log_util.o
 NET_TARGET=network
 
-SEN_OBJ=$(SEN)sensor.o $(ETC)ipc.o $(ETC)config.o $(ETC)log.o
+SEN_OBJ=$(SEN)sensor.o $(ETC)ipc.o $(ETC)config.o $(ETC)log_util.o $(SEN)rpi.o $(PROTOCOL)sensor_protocol.o
 SEN_TARGET=sensor
 
 LIB=pthread
@@ -30,7 +30,7 @@ clean :
 	rm -fr ./etc/nhsocket ./etc/gateway.txt
 
 build : $(MAIN_OBJ) $(NET_OBJ) $(SEN_OBJ)
-	$(CC) $(CFLAGS) -o  $(MAIN_TARGET) $(MAIN_OBJ) -l$(LIB)
+	$(CC) $(CFLAGS) -o  $(MAIN_TARGET) $(MAIN_OBJ) -l$(LIB) -L./src/define
 	$(CC) $(CFLAGS) -o $(NET_TARGET) $(NET_OBJ) -l$(LIB)
 	$(CC) $(CFLAGS) -o $(SEN_TARGET) $(SEN_OBJ) -l$(LIB) -l$(RPI)
 

@@ -27,7 +27,7 @@ typedef struct{
 
 int initializeLocalSocket_Server(int* sockfd, struct sockaddr_un* server, int* serverSize, const char* sockpath);
 int acceptLocalSocket(int* serversockfd, struct sockaddr_un* client, socklen_t* size);
-int initialzieLocalSocket_Client(int* sockfd, struct sockaddr_un* client, socklen_t* size, const char* sockpath,int TIMEOUT);
+int initialzieLocalSocket_Client(int* sockfd, struct sockaddr_un* client, socklen_t* size, const char* sockpath, int TIMEOUT);
 int writeIPC_Data(int* sockfd, void* buf, size_t* size);
 int readIPC_Data(int sockfd, uint8_t* buf, size_t size);
 

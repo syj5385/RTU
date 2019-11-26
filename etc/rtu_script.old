@@ -20,17 +20,15 @@ SENPID=/var/run/sensor.pid
 LOGFILE=/var/log/rtu.log
 
 start() {
-  if [ -f "$RTUFILE" ] && kill -0 $(cat "$RTUFILE"); then
+  if [ -f /var/run/$PIDNAME ] && kill -0 $(cat /var/run/$PIDNAME); then
     echo 'Service already running' >&2
     return 1
   fi
   echo 'Starting service…' >&2
-  local CMD="$SCRIPT &> \"$LOGFILE\" & echo \$!"
-#local CMD1="$NET_SCRIPT &> \"$LOGFILE\" & echo \$!"
-#  local CMD2="$SEN_SCRIPT &> \"$LOGFILE\" & echo \$!"
-  su -c "$CMD" $RUNAS > "$PIDFILE"
-#  su -c "$CMD1" $RUNAS > "$NETPID"
-#  su -c "$CMD2" $RUNAS > "$SENPID"
+  local CMD1="$NET_SCRIPT &> \"$LOGFILE\" & echo \$!"
+  local CMD2="$SEN_SCRIPT &> \"$LOGFILE\" & echo \$!"
+  su -c "$CMD1" $RUNAS > "$NETPID"
+  su -c "$CMD2" $RUNAS > "$SENPID"
   echo 'Service started' >&2
 }
 
@@ -44,11 +42,11 @@ stop() {
   kill $(cat "$PIDFILE") && rm -f "$PIDFILE"
   rm -f "$NETPID"
   rm -f "$SENPID"
-#kill -9 $(cat "$NETPID") && rm -f "$NETPID"
-#  kill -9 $(cat "$SENPID") && rm -f "$SENPID"
+  kill -9 $(cat "$NETPID") && rm -f "$NETPID"
+  kill -9 $(cat "$SENPID") && rm -f "$SENPID"
 
   echo 'Service stopped' >&2
-  fuser -k 50000/tcp
+  fuser -k 5000/tcp
 }
 
 uninstall() {

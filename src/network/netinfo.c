@@ -1,5 +1,5 @@
 /*
- * netinfo.c
+ i netinfo.c
  *
  *  Created on: Jan 25, 2019
  *      Author: jjun
@@ -23,17 +23,19 @@
 #include <ctype.h>
 #include <string.h>
 #include <net/route.h>
+#include "../etc/log_util.h"
 #include <linux/rtnetlink.h>
 
-#include "../etc/log.h"
 #include "../define.h"
 
+#define DHCPCD_OLD "/etc/dhcpcd_old.conf"
+#define	DHCPCD	"/etc/dhcpcd.conf"
+
 char* getAddressFromIntegerArray(u_long before){
-	char* after;
+	
 	struct in_addr after_addr;
 	after_addr.s_addr = before;
-	after = inet_ntoa(after_addr);
-	return after;
+	return inet_ntoa(after_addr);
 }
 
 u_long get_IPAddress(char* interface){
@@ -44,14 +46,12 @@ u_long get_IPAddress(char* interface){
 
 	sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if(socket < 0){
-		printf("error\n");
 		return -1;
 	}
 
 	strcpy(ifr.ifr_name, interface);
 	if(ioctl(sockfd, SIOCGIFADDR, &ifr) < 0){
 		close(sockfd);
-		printf("error\n");
 		return -1;
 	}
 
@@ -79,9 +79,7 @@ u_long get_SubnetMask(char* interface){
 		return -1;
 	}
 	addr = (struct sockaddr_in*)&ifr.ifr_addr;
-//	strcpy(netmask, inet_ntoa(addr->sin_addr));
 	netmask = (u_long)addr->sin_addr.s_addr;
-//	netmask = convertBig_to_SmallEndianAddress(&addr->sin_addr.s_addr);
 	close(sockfd);
 	return netmask;
 }
@@ -198,7 +196,6 @@ u_long get_gatewayip(char* ifname){
                 parseRoutes(nlMsg, rtInfo);
 
                 if(strstr((char*)inet_ntoa(rtInfo->dstAddr),"0.0.0.0")){
-                        //strcpy(gatewayip, inet_ntoa(rtInfo -> gateWay));
 			gatewayip = (u_long)rtInfo->gateWay.s_addr;
                         strcpy(ifname, rtInfo -> ifName);
                         found_gatewayip = 1;
@@ -211,23 +208,67 @@ u_long get_gatewayip(char* ifname){
 
 }
 
-int setNetworkInformation(char *ipaddr, char *netmask, char *gateway){
-	/*
-	printf("set network information\n");
-	char system_buf[1000];
-*/
+int setNetworkInformation(char *ipaddr, u_long netmask, char *gateway){
 
-	/* set down network interface before set network information */
-/*	bzero(system_buf, sizeof(system_buf));
-	sprintf(system_buf, "ifdown %s", NET_INTERFACE);
-	system(system_buf);
+	char information[1000];
+	uint8_t netmask_arr[4]; 
+	int netmask_count = 0; 
+	int i=0, j=0, found=0;
+	FILE *dhcpcd_file, *new_file;
+	char buf_in[BUFSIZ];
+	char buf_out[BUFSIZ];
+	u_long offset = 0; 
+	rename(DHCPCD, DHCPCD_OLD);
+	if((dhcpcd_file = fopen(DHCPCD_OLD,"r")) == NULL){
+		perror("Failed to open /etc/dhcpcd.conf file");
+		return -1;
+	}
+	if((new_file = fopen(DHCPCD,"w+")) == NULL){
+		perror("Failed to open new File");
+		return -1;
+	}
 
-	sleep(1);
+	netmask_arr[0] = netmask & 0xff; 
+	netmask_arr[1] = (netmask>>8) & 0xff; 
+	netmask_arr[2] = (netmask>>16) & 0xff;
+	netmask_arr[3] = (netmask>>24) & 0xff;
 
-	bzero(system_buf,sizeof(system_buf));
-	sprintf(system_buf, "ifup %s", NET_INTERFACE);
-	system(system_buf);
-	*/
+	for(j=0; j<4; j++){
+		for(i=0; i<8; i++){
+			if((netmask_arr[j] & 0x80)>0){
+				netmask_count++;
+			}
+			else{
+				break; 
+			}
+			netmask_arr[j] = netmask_arr[j] << 1; 
+			printf("continue : %d\n",netmask_arr[j]);
+		}	
+	}
+	
+
+	sprintf(information, "ip : %s\tnetmask : %d\tgateway : %s", ipaddr, netmask_count, gateway);
+
+	LOG_TRACE(information);
+
+	/* search target */
+
+	
+	bzero(buf_in,BUFSIZ);
+	while(fgets(buf_in,BUFSIZ,dhcpcd_file) != NULL){
+
+		if((strstr(buf_in,"interface eth0")-buf_in) == 0){
+			break; 
+		}
+		else{
+			fprintf(new_file, buf_in); 
+		}
+	}
+	fprintf(new_file,"interface eth0\nstatic ip_address=%s/%d\nstatic routers=%s\n",ipaddr, netmask_count, gateway);
+	fclose(dhcpcd_file);
+	fclose(new_file);
+	remove(DHCPCD_OLD);
+	execl("/sbin/reboot", "/sbin/reboot", NULL);
 }
 
 

@@ -7,6 +7,8 @@ SCRIPT=rtu_script
 
 
 logAndconf(){
+	mkdir -p /etc/rtu
+	mkdir -p /var/log/rtu
 	cp etc/ports.conf $PORTCONF
 	cp etc/rtu.conf $CONFFILE
 	. $CONFFILE
@@ -32,9 +34,9 @@ setService(){
 	chown root /etc/init.d/rtu
 	chgrp root /etc/init.d/rtu
 	update-rc.d rtu defaults
-	service rtu start
 	systemctl daemon-reload
-	/etc/init.d/rtu start
+	sudo service rtu restart
+#/etc/init.d/rtu start
 }
 
 logAndconf
@@ -43,5 +45,5 @@ compile
 #	if [["$LINE" =~ "SERVERNAME"]];then
 #		echo "find server name"
 #	fi
-#done < $CONFFILE
-setService
+#done < $CONFFIL
+#setService

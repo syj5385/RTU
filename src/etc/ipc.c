@@ -1,9 +1,10 @@
 
 #include "ipc.h"
-#include "log.h"
+#include "log_util.h"
 
 
 #include <unistd.h>
+#include <sys/socket.h>
 
 static const char* IPC_TAG = "IPC";
 
@@ -18,18 +19,18 @@ int initializeLocalSocket_Server(int* sockfd, struct sockaddr_un *server, int* s
 	*serverSize = sizeof(*server);
 	r = bind(*sockfd, (struct sockaddr*)server, *serverSize);
 	if(r  == -1){
-//		writeLog(ERROR,IPC_TAG,"Failed to bind local socket client");
-		return 0;
+		LOG_ERROR("ERROR : Failed to connect to local socket\n");
+		return -1; 
 	}
 	listen(*sockfd,10 );
-	return 1;
+	return 0;
 }
 
 int acceptLocalSocket(int* serversockfd, struct sockaddr_un *client, socklen_t* size){
 	int sockfd;
 	sockfd = accept(*serversockfd, (struct sockaddr*)client, size);
 	if(sockfd == -1){
-//		writeLog(ERROR,IPC_TAG,"Failed to accept local socket client");
+		LOG_ERROR("ERROR : Failed to accept new Local Socket Client");
 		return -1;
 	}
 	return sockfd;
@@ -38,30 +39,23 @@ int acceptLocalSocket(int* serversockfd, struct sockaddr_un *client, socklen_t* 
 int initialzieLocalSocket_Client(int* sockfd, struct sockaddr_un *server, socklen_t* size, const char* sockpath ,int TIMEOUT){
 	int max_count = TIMEOUT/1000;
 	int count = 0;
-
+	struct timeval tv; 
+	tv.tv_sec = IPC_TIMEOUT_SEC;
+	tv.tv_usec = IPC_TIMEOUT_MILLI;
 	*sockfd = socket(PF_LOCAL, SOCK_STREAM, 0);
+	setsockopt(*sockfd, SOL_SOCKET, SO_RCVTIMEO, (char*)&tv, sizeof(struct timeval));
+	if(fcntl(*sockfd, F_SETFL, O_NONBLOCK) == -1){
+		return -1; 
+	}
 	bzero(server, sizeof(server));
 	server->sun_family = AF_LOCAL;
 	strcpy(server->sun_path,sockpath);
 	*size = sizeof(*server);
-	while(1){
-		if(connect(*sockfd, (struct sockaddr*)server,*(int*)size) == -1){
-			char log_buf[100];
-			bzero(log_buf,sizeof(log_buf));
-//			sprintf(log_buf,"try to connect to local server socket again (%d/%d)",count+1, max_count);
-//			writeLog(WARNING,IPC_TAG,log_buf);
-			if(count++ < max_count){
-				sleep(1);
-				continue;
-			}
-			else
-				return 0;
-		}
-		else{
-			return 1;
-		}
+	if(connect(*sockfd, (struct sockaddr*)server,*(int*)size) < 0){
+		return -1; 
 	}
-
+	fcntl(*sockfd, F_SETFL, 0);
+	return 0 ;
 }
 
 int writeIPC_Data(int* sockfd, void* buf, size_t* size){
@@ -80,7 +74,7 @@ int readIPC_Data(int sockfd, uint8_t* buf, size_t size){
 	/* This function is implemented for reading more 8-byte from file descriptor */
 	int n;
 	int read_bytes =0;
-	while(1){
+/*	while(1){
 		n = read(sockfd, buf+read_bytes, 8);
 		if(n < 0){
 			return -1;
@@ -97,7 +91,7 @@ int readIPC_Data(int sockfd, uint8_t* buf, size_t size){
 			read_bytes += n;
 			continue;
 		}
-	}
-	return read_bytes;
+	}*/ 
+	return read(sockfd, buf, size);
 }
 
